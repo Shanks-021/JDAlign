@@ -1,17 +1,14 @@
 import streamlit as st
-import requests
 import tempfile
 import os
-import certifi
+from jd_resume_analyzer import analyze_jd_resume, extract_jd_from_url, extract_resume_text
+
 # Page configuration
 st.set_page_config(
     page_title="JD Resume Analyzer",
     page_icon="📄",
     layout="wide"
 )
-
-# API endpoint
-API_URL = "http://localhost:8000/analyze"
 
 # Custom CSS
 st.markdown("""
@@ -106,32 +103,37 @@ if analyze_button:
         # Show progress
         with st.spinner("🔍 Analyzing your resume... This may take 10-30 seconds"):
             try:
-                # Prepare the request
-                files = {
-                    'resume': (uploaded_file.name, uploaded_file.getvalue(), 'application/pdf')
-                }
+                # Save uploaded PDF temporarily
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                    tmp_file.write(uploaded_file.getbuffer())
+                    tmp_path = tmp_file.name
                 
-                data = {}
-                if jd_url:
-                    data['jd_url'] = jd_url
-                else:
-                    data['jd_text'] = jd_text
-                
-                if show_debug:
-                    st.write("**Debug: Request data**")
-                    st.json({"jd_url": jd_url if jd_url else None, "jd_text_length": len(jd_text) if jd_text else 0})
-                
-                # Make API request
-                response = requests.post(API_URL, files=files, data=data)
-                
-                if show_debug:
-                    st.write("**Debug: Response status**")
-                    st.write(f"Status code: {response.status_code}")
-                
-                # Handle response
-                if response.status_code == 200:
-                    result = response.json()
+                try:
+                    if show_debug:
+                        st.write("**Debug: Processing**")
+                        st.write(f"Resume file: {uploaded_file.name}")
+                        st.write(f"JD source: {'URL' if jd_url else 'Text'}")
                     
+                    # Get JD content
+                    if jd_url:
+                        st.info("📥 Fetching job description from URL...")
+                        jd_content = extract_jd_from_url(jd_url)
+                    else:
+                        jd_content = jd_text
+                    
+                    # Extract resume text
+                    st.info("📄 Extracting text from resume...")
+                    resume_text = extract_resume_text(tmp_path)
+                    
+                    if show_debug:
+                        st.write(f"**Resume text length:** {len(resume_text)} characters")
+                        st.write(f"**JD text length:** {len(jd_content)} characters")
+                    
+                    # Analyze
+                    st.info("🤖 Analyzing with Gemini AI...")
+                    analysis = analyze_jd_resume(jd_content, resume_text)
+                    
+                    # Display success
                     st.success("✅ Analysis completed successfully!")
                     
                     # Display results
@@ -139,28 +141,26 @@ if analyze_button:
                     st.header("📊 Analysis Results")
                     
                     # Show analysis in a nice format
-                    st.markdown(result['analysis'])
+                    st.markdown(analysis)
                     
                     # Download button
                     st.divider()
                     st.download_button(
                         label="📥 Download Analysis Report",
-                        data=result['analysis'],
+                        data=analysis,
                         file_name="resume_analysis.md",
                         mime="text/markdown"
                     )
                     
-                else:
-                    error_detail = response.json().get('detail', 'Unknown error')
-                    st.error(f"❌ Analysis failed: {error_detail}")
-                    
-                    if show_debug:
-                        st.write("**Debug: Full response**")
-                        st.json(response.json())
+                finally:
+                    # Clean up temp file
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
                         
-            except requests.exceptions.ConnectionError:
-                st.error("❌ Could not connect to the backend server. Make sure it's running on http://localhost:8000")
-                st.info("💡 Start the backend with: `uvicorn api:app --reload`")
+            except ValueError as e:
+                st.error(f"❌ Error: {str(e)}")
+                if show_debug:
+                    st.exception(e)
             except Exception as e:
                 st.error(f"❌ An error occurred: {str(e)}")
                 if show_debug:
@@ -170,7 +170,7 @@ if analyze_button:
 st.divider()
 st.markdown("""
     <div style='text-align: center; color: #666; padding: 2rem;'>
-        <p>Made with ❤️ using Streamlit & FastAPI</p>
+        <p>Made with ❤️ using Streamlit</p>
         <p>Powered by Google Gemini AI</p>
     </div>
 """, unsafe_allow_html=True)
